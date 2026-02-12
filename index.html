@@ -37,7 +37,7 @@
             width: 100%;
             max-width: 500px;
             height: 100vh;
-            height: 100dvh; /* Dynamic viewport height para móviles */
+            height: 100dvh;
             background: rgba(255, 255, 255, 0.2);
             backdrop-filter: blur(10px);
             overflow: hidden;
@@ -85,20 +85,14 @@
             font-size: 40px;
             cursor: pointer;
             user-select: none;
-            animation: fall linear;
             filter: drop-shadow(0 0 5px rgba(255, 20, 147, 0.5));
             transition: transform 0.1s;
             pointer-events: auto;
+            will-change: transform;
         }
 
         .heart:active {
             transform: scale(1.2);
-        }
-
-        @keyframes fall {
-            to {
-                transform: translateY(calc(100vh - 80px));
-            }
         }
 
         .particle {
@@ -122,13 +116,11 @@
         #basket {
             position: absolute;
             bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
             font-size: 60px;
             filter: drop-shadow(0 4px 8px rgba(255, 20, 147, 0.4));
-            transition: none;
             z-index: 10;
-            will-change: left;
+            will-change: transform;
+            transform: translateX(-50%);
         }
 
         #gameOver {
@@ -186,6 +178,16 @@
             font-size: 14px;
             text-shadow: 1px 1px 3px rgba(255, 20, 147, 0.5);
             padding: 0 20px;
+        }
+
+        #difficulty {
+            position: absolute;
+            top: 90px;
+            right: 15px;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 12px;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+            z-index: 101;
         }
 
         .combo {
@@ -259,6 +261,8 @@
             <div id="timer">⏱️ Tiempo: 60s</div>
         </div>
 
+        <div id="difficulty">Nivel: Fácil</div>
+
         <div id="gameArea"></div>
 
         <div id="basket">🧺</div>
@@ -280,6 +284,7 @@
         const basket = document.getElementById('basket');
         const scoreDisplay = document.getElementById('score');
         const timerDisplay = document.getElementById('timer');
+        const difficultyDisplay = document.getElementById('difficulty');
         const gameOverScreen = document.getElementById('gameOver');
         const finalScoreDisplay = document.getElementById('finalScore');
         const restartBtn = document.getElementById('restartBtn');
@@ -289,10 +294,12 @@
         let gameActive = false;
         let hearts = [];
         let basketX = window.innerWidth / 2;
+        let targetBasketX = basketX;
         let spawnInterval;
         let timerInterval;
         let combo = 0;
         let lastCatchTime = 0;
+        let animationFrame;
 
         const heartEmojis = ['❤️', '💕', '💖', '💗', '💝', '💘'];
 
@@ -304,16 +311,12 @@
         }, { passive: false });
 
         // Control táctil mejorado - deslizar para mover la cesta
-        let touchStartX = 0;
-        let lastTouchX = 0;
-        let isTouchingBasket = false;
-
         gameContainer.addEventListener('touchstart', (e) => {
             if (!gameActive) return;
             
             const touch = e.touches[0];
-            touchStartX = touch.clientX;
-            lastTouchX = touch.clientX;
+            const rect = gameContainer.getBoundingClientRect();
+            targetBasketX = Math.max(30, Math.min(rect.width - 30, touch.clientX - rect.left));
             
             // Verificar si tocó un corazón
             const target = document.elementFromPoint(touch.clientX, touch.clientY);
@@ -332,22 +335,29 @@
             const touch = e.touches[0];
             const rect = gameContainer.getBoundingClientRect();
             
-            // Calcular la posición de la cesta basada en el toque
-            const touchX = touch.clientX - rect.left;
-            basketX = Math.max(30, Math.min(rect.width - 30, touchX));
-            basket.style.left = basketX + 'px';
-            
-            lastTouchX = touch.clientX;
+            // Actualizar la posición objetivo de la cesta
+            targetBasketX = Math.max(30, Math.min(rect.width - 30, touch.clientX - rect.left));
         }, { passive: false });
 
-        // También permitir arrastrar directamente la cesta
-        basket.addEventListener('touchstart', (e) => {
-            isTouchingBasket = true;
-        }, { passive: true });
+        // Función para animar la cesta de forma suave (interpolación)
+        function updateBasketPosition() {
+            if (!gameActive) return;
+            
+            // Interpolación suave (lerp) para movimiento fluido
+            const lerpFactor = 0.2; // Ajusta entre 0 (lento) y 1 (instantáneo)
+            basketX += (targetBasketX - basketX) * lerpFactor;
+            
+            basket.style.left = basketX + 'px';
+        }
 
-        basket.addEventListener('touchend', (e) => {
-            isTouchingBasket = false;
-        }, { passive: true });
+        // Obtener dificultad según el tiempo
+        function getDifficulty() {
+            const elapsed = 60 - timeLeft;
+            if (elapsed < 15) return { level: 'Fácil', speedMin: 3, speedMax: 4.5, spawnRate: 900, swing: 0.3 };
+            if (elapsed < 30) return { level: 'Medio', speedMin: 2.5, speedMax: 4, spawnRate: 700, swing: 0.5 };
+            if (elapsed < 45) return { level: 'Difícil', speedMin: 2, speedMax: 3.5, spawnRate: 500, swing: 0.8 };
+            return { level: 'Extremo', speedMin: 1.5, speedMax: 3, spawnRate: 400, swing: 1.2 };
+        }
 
         function createHeart() {
             const heart = document.createElement('div');
@@ -359,16 +369,23 @@
             heart.style.left = x + 'px';
             heart.style.top = '-40px';
             
-            const duration = 3 + Math.random() * 2;
-            heart.style.animationDuration = duration + 's';
+            const difficulty = getDifficulty();
+            const duration = difficulty.speedMin + Math.random() * (difficulty.speedMax - difficulty.speedMin);
+            
+            // Crear movimiento oscilante (swing)
+            const swingAmplitude = difficulty.swing * (30 + Math.random() * 40);
+            const swingFrequency = 0.5 + Math.random() * 1.5;
+            const swingDirection = Math.random() > 0.5 ? 1 : -1;
             
             gameArea.appendChild(heart);
             
             const heartObj = {
                 element: heart,
-                x: x,
+                startX: x,
                 startTime: Date.now(),
-                duration: duration * 1000
+                duration: duration * 1000,
+                swingAmplitude: swingAmplitude * swingDirection,
+                swingFrequency: swingFrequency
             };
             
             hearts.push(heartObj);
@@ -378,6 +395,35 @@
                 e.stopPropagation();
                 catchHeart(heartObj);
             }, { passive: false });
+        }
+
+        function updateHearts() {
+            const containerHeight = gameArea.offsetHeight;
+            const containerWidth = gameArea.offsetWidth;
+            const now = Date.now();
+            
+            hearts.forEach(heartObj => {
+                const elapsed = now - heartObj.startTime;
+                const progress = Math.min(elapsed / heartObj.duration, 1);
+                
+                // Calcular posición Y (caída)
+                const y = progress * (containerHeight + 80);
+                
+                // Calcular oscilación horizontal (movimiento ondulante)
+                const swingOffset = Math.sin(progress * Math.PI * 2 * heartObj.swingFrequency) * heartObj.swingAmplitude;
+                const x = heartObj.startX + swingOffset;
+                
+                // Aplicar rotación según la oscilación
+                const rotation = swingOffset * 0.5;
+                
+                heartObj.element.style.transform = `translate(${x - heartObj.startX}px, ${y}px) rotate(${rotation}deg)`;
+                
+                // Eliminar si salió de la pantalla
+                if (y > containerHeight + 80) {
+                    heartObj.element.remove();
+                    hearts = hearts.filter(h => h !== heartObj);
+                }
+            });
         }
 
         function catchHeart(heartObj) {
@@ -454,12 +500,6 @@
                     Math.abs(heartCenterX - basketCenterX) < 50) {
                     catchHeart(heartObj);
                 }
-                
-                // Eliminar corazones que cayeron
-                if (heartRect.top > window.innerHeight) {
-                    heartObj.element.remove();
-                    hearts = hearts.filter(h => h !== heartObj);
-                }
             });
         }
 
@@ -470,9 +510,32 @@
         function updateTimer() {
             timerDisplay.textContent = `⏱️ Tiempo: ${timeLeft}s`;
             
+            // Actualizar dificultad
+            const difficulty = getDifficulty();
+            difficultyDisplay.textContent = `Nivel: ${difficulty.level}`;
+            
             if (timeLeft <= 0) {
                 endGame();
             }
+        }
+
+        function updateDifficulty() {
+            const difficulty = getDifficulty();
+            
+            // Ajustar la velocidad de spawn según la dificultad
+            clearInterval(spawnInterval);
+            spawnInterval = setInterval(createHeart, difficulty.spawnRate);
+        }
+
+        // Loop principal del juego
+        function gameLoop() {
+            if (!gameActive) return;
+            
+            updateBasketPosition();
+            updateHearts();
+            checkCollisions();
+            
+            animationFrame = requestAnimationFrame(gameLoop);
         }
 
         function startGame() {
@@ -485,6 +548,7 @@
             // Centrar la cesta al inicio
             const rect = gameContainer.getBoundingClientRect();
             basketX = rect.width / 2;
+            targetBasketX = basketX;
             basket.style.left = basketX + 'px';
             
             gameArea.innerHTML = '';
@@ -493,26 +557,28 @@
             updateScore();
             updateTimer();
             
-            spawnInterval = setInterval(createHeart, 800);
+            const difficulty = getDifficulty();
+            spawnInterval = setInterval(createHeart, difficulty.spawnRate);
             
             timerInterval = setInterval(() => {
                 timeLeft--;
                 updateTimer();
+                
+                // Actualizar dificultad cada 15 segundos
+                if (timeLeft % 15 === 0) {
+                    updateDifficulty();
+                }
             }, 1000);
             
-            const collisionCheck = setInterval(() => {
-                if (!gameActive) {
-                    clearInterval(collisionCheck);
-                    return;
-                }
-                checkCollisions();
-            }, 50);
+            // Iniciar el loop del juego
+            gameLoop();
         }
 
         function endGame() {
             gameActive = false;
             clearInterval(spawnInterval);
             clearInterval(timerInterval);
+            cancelAnimationFrame(animationFrame);
             
             hearts.forEach(h => h.element.remove());
             hearts = [];
